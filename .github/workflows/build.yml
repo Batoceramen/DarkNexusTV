@@ -1,0 +1,102 @@
+
+name: Construir DARK NEXUS TV
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Compilar APK Android
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Descargar repositorio
+        uses: actions/checkout@v4
+
+      - name: Buscar y descomprimir proyecto
+        shell: bash
+        run: |
+          set -e
+
+          echo "Buscando archivos ZIP..."
+          find . -type f -iname "*.zip" \
+            -not -path "./.git/*" -print
+
+          ZIP_FILE="$(find . -type f -iname "*.zip" \
+            -not -path "./.git/*" | head -n 1)"
+
+          if [ -z "$ZIP_FILE" ]; then
+            echo "::error::No se encontró ningún archivo ZIP."
+            exit 1
+          fi
+
+          echo "ZIP encontrado: $ZIP_FILE"
+
+          mkdir -p proyecto
+          unzip -oq "$ZIP_FILE" -d proyecto
+
+          echo "Buscando el proyecto Android..."
+          PROJECT_DIR="$(find proyecto -type f \
+            -name settings.gradle -printf '%h\n' | head -n 1)"
+
+          if [ -z "$PROJECT_DIR" ]; then
+            echo "::error::No se encontró settings.gradle dentro del ZIP."
+            find proyecto -maxdepth 5 -type f -print
+            exit 1
+          fi
+
+          echo "Proyecto localizado en: $PROJECT_DIR"
+
+          if [ ! -f "$PROJECT_DIR/app/build.gradle" ]; then
+            echo "::error::No se encontró app/build.gradle."
+            exit 1
+          fi
+
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+
+      - name: Configurar Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Instalar Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Instalar componentes Android
+        run: |
+          sdkmanager "platforms;android-34" "build-tools;34.0.0"
+
+      - name: Configurar Gradle
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: '8.2'
+
+      - name: Compilar DARK NEXUS TV
+        run: |
+          gradle -p "$PROJECT_DIR" assembleDebug --no-daemon
+
+      - name: Verificar APK
+        run: |
+          APK="$PROJECT_DIR/app/build/outputs/apk/debug/app-debug.apk"
+
+          if [ ! -f "$APK" ]; then
+            echo "::error::La compilación terminó sin generar el APK."
+            exit 1
+          fi
+
+          ls -lh "$APK"
+
+      - name: Publicar APK descargable
+        uses: actions/upload-artifact@v4
+        with:
+          name: DARK-NEXUS-TV-APK
+          path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 7
